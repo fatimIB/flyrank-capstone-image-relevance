@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.pyc
 *.pyo
 
 .venv/
@@ -15,3 +16,10 @@ env/
 Thumbs.db
 
 .pytest_cache/
+
+*.db
+*.sqlite
+*.sqlite3
+
+.vscode/
+.idea/
