@@ -101,8 +101,93 @@
   misclassification sat at 0.8-1.00 confidence and would still pass
   through unflagged either way. I pointed this out and decided to keep
   the threshold at 0.5 — raising it would have punished correct answers
-  while catching zero of the real errors. This confirmed that confidence
-  score isn't a reliable signal for correctness in this dataset, and
-  that the guard's category-match check (not the confidence flag) is
-  what has to catch this specific class of error — which is exactly
-  what Phase 3 builds next.
+  while catching zero of the real errors. This showed that confidence alone could not reliably detect the observed wolf errors. The category-match guard can catch cases where the model's
+  claimed category conflicts with the post's expected category, but it cannot
+  catch a confidently misclassified image when the model's incorrect category
+  already agrees with the post. That limitation became an important Phase 3
+  finding.
+
+## Phase 3 — Matching engine (in progress)
+
+- I asked the AI to write the embedding and matching code:
+  `app/jobs/seed_posts.py`, `app/services/embedding_service.py`,
+  `app/services/similarity.py`, `app/jobs/generate_embeddings.py`, and
+  `app/services/matching_engine.py`. **The AI wrote this code, not me.**
+  My role was running it, reading it to understand it, and testing it
+  against my real data.
+
+- Ran `generate_embeddings.py` on all 50 images and 6 posts — worked
+  cleanly, no errors, using `sentence-transformers` (`all-MiniLM-L6-v2`)
+  locally, same library I already knew from AskFatima.
+
+- First test of the full matching engine, using the 0.75 threshold from
+  my Phase 1 design, rejected all 6 posts — including the 5 real,
+  correctly-topical ones. I noticed this myself and questioned it rather
+  than assuming the threshold was correct just because AI had suggested
+  it originally.
+
+- I asked the AI to explain why real matches were only scoring
+  0.45-0.70 instead of something closer to 1.0. The explanation: my
+  posts are long, essay-style paragraphs (behavior, history, ecology)
+  while my image captions are short, plain visual descriptions — these
+  are structurally different types of text, so even a correct semantic
+  match won't score near-identical. I found this explanation checks out
+  against my own data: the true non-match (Roman aqueducts post) scored
+  0.059, a huge, clean gap below every real match (0.45-0.70) — proving
+  the embeddings themselves are working correctly, it's specifically my
+  threshold guess from Phase 1 that didn't hold up against real data.
+
+- Separately, I noticed something concerning myself while reading the
+  Post 3 (dog post) result: the top-ranked candidate was image_id=19,
+  which I recognized from my Phase 2 data as one of the wolf photos the
+  vision model had mislabeled as "dog." I raised this directly: if I
+  lower the threshold so this candidate actually gets accepted, the
+  guard's category check would see category="dog" matching the dog
+  post's expected_category="dog" and pass it — recommending an actual
+  wolf photo as a dog image, with the guard finding nothing wrong.
+
+- I pushed on this with the AI and confirmed it's a real, structural
+  limitation: the guard can only compare what the vision model *claims*
+  (category) against what the post expects — it has no independent way
+  to verify the model's claim is actually true. When the model is
+  wrong but internally consistent (wrong category AND a caption that
+  matches that wrong category), nothing in the guard's current design
+  can catch it. This is different from the fox/wolf case the guard DOES
+  catch, where the model's stated category itself disagrees with the
+  post — this case has no such disagreement to detect.
+
+- I decided not to try to "fix" this by having the guard secretly check
+  against my folder_category ground truth, since a real system
+  wouldn't have that available for new, unlabeled images — that would
+  make the guard only work on my own test data, not represent a real
+  solution. Instead, documenting it honestly as a known limitation in
+  Design.md and EVIDENCE.md, and relying on the human review layer
+  (Phase 4) as the intended mechanism for catching exactly this class
+  of error — which is why review exists as a separate layer, not a
+  redundant one.
+
+- I then directly questioned why the threshold should stay at 0.75
+  "until Phase 4 eval" when the data I already had made it obviously
+  unusable — every real post was being rejected, which isn't a case of
+  fine-tuning, it's a broken default. I pushed for changing it now
+  rather than waiting. Looking at my own numbers (real matches at
+  0.45-0.70, true non-match at 0.059), I picked 0.4 as the new value —
+  comfortably above the non-match, comfortably below the weakest real
+  match, both grounded in my own observed data rather than a round
+  guess.
+
+- Re-ran the matching engine with the threshold at 0.4: all 5 real
+  posts now ACCEPTED with images from their own category; the Roman
+  aqueducts post still correctly REJECTED (similarity 0.059, nowhere
+  close to 0.4). This confirmed §12 Probe 4 ("no confident match") is
+  working. It also confirmed the limitation I found earlier was real,
+  not just theoretical — image_id=19 (the mislabeled wolf-as-dog photo)
+  is now genuinely accepted as the dog post's top match, exactly as
+  predicted.
+
+- Still outstanding: none of the 6 posts triggered an actual
+  category-mismatch REJECTION from the guard (rule 3), since each
+  post's top candidate already happened to share its category. Probe 3
+  ("force the wolf as a candidate for the fox post → guard rejects it")
+  still needs to be tested explicitly, not just inferred from these 6
+  runs.

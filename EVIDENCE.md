@@ -134,6 +134,191 @@ Every vision call, success or failure, is logged to `ai_usage_log`:
 50 rows, one per image, all attributed with operation/model/status/cost
 (local model — cost is $0, but every call is still logged).
 
+## Matching engine — embeddings + similarity ranking + guard ⚠️ (threshold needed adjustment — see below)
+ 
+Embeddings generated for all 50 image captions and all 6 posts using
+`sentence-transformers` (`all-MiniLM-L6-v2`), local, no API key:
+ 
+```
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> python -m app.jobs.generate_embeddings
+Embedding 50 image captions...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights: 100%|████████████████████████████████████████████████| 103/103 [00:00<00:00, 1415.18it/s]
+  image_id=1 -> embedded (fox)
+  image_id=2 -> embedded (fox)
+  image_id=3 -> embedded (fox)
+  image_id=4 -> embedded (fox)
+  image_id=5 -> embedded (fox)
+  image_id=6 -> embedded (fox)
+  image_id=7 -> embedded (fox)
+  image_id=8 -> embedded (fox)
+  image_id=9 -> embedded (fox)
+  image_id=10 -> embedded (fox)
+  image_id=11 -> embedded (wolf)
+  image_id=12 -> embedded (fox)
+  image_id=13 -> embedded (wolf)
+  image_id=14 -> embedded (dog)
+  image_id=15 -> embedded (wolf)
+  image_id=16 -> embedded (wolf)
+  image_id=17 -> embedded (wolf)
+  image_id=18 -> embedded (wolf)
+  image_id=19 -> embedded (dog)
+  image_id=20 -> embedded (dog)
+  image_id=21 -> embedded (dog)
+  image_id=22 -> embedded (dog)
+  image_id=23 -> embedded (dog)
+  image_id=24 -> embedded (dog)
+  image_id=25 -> embedded (dog)
+  image_id=26 -> embedded (dog)
+  image_id=27 -> embedded (dog)
+  image_id=28 -> embedded (dog)
+  image_id=29 -> embedded (dog)
+  image_id=30 -> embedded (dog)
+  image_id=31 -> embedded (bear)
+  image_id=32 -> embedded (bear)
+  image_id=33 -> embedded (bear)
+  image_id=34 -> embedded (bear)
+  image_id=35 -> embedded (bear)
+  image_id=36 -> embedded (bear)
+  image_id=37 -> embedded (bear)
+  image_id=38 -> embedded (bear)
+  image_id=39 -> embedded (bear)
+  image_id=40 -> embedded (bear)
+  image_id=41 -> embedded (deer)
+  image_id=42 -> embedded (deer)
+  image_id=43 -> embedded (deer)
+  image_id=44 -> embedded (deer)
+  image_id=45 -> embedded (deer)
+  image_id=46 -> embedded (deer)
+  image_id=47 -> embedded (deer)
+  image_id=48 -> embedded (deer)
+  image_id=49 -> embedded (deer)
+  image_id=50 -> embedded (deer)
+Embedding 6 posts...
+  post_id=1 -> embedded (Red Fox Behavior)
+  post_id=2 -> embedded (Wolves in the Wild)
+  post_id=3 -> embedded (Understanding Domestic Dogs)
+  post_id=4 -> embedded (Life of the Brown Bear)
+  post_id=5 -> embedded (Deer Habitats and Migration)
+  post_id=6 -> embedded (The Architecture of Ancient Roman Aqueducts)
+Done.
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> 
+
+```
+ 
+First run of the matching engine, with the original threshold from
+Design.md (0.75):
+ 
+```
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> python -m app.services.matching_engine
+Testing matching engine against 6 posts:
+
+Post 1 (Red Fox Behavior) [expected: fox]
+  -> REJECTED | image_id=7 | similarity=0.669
+  -> reason: no confident match, similarity (0.67) below threshold (0.75)
+
+Post 2 (Wolves in the Wild) [expected: wolf]
+  -> REJECTED | image_id=18 | similarity=0.626
+  -> reason: no confident match, similarity (0.63) below threshold (0.75)
+
+Post 3 (Understanding Domestic Dogs) [expected: dog]
+  -> REJECTED | image_id=19 | similarity=0.450
+  -> reason: no confident match, similarity (0.45) below threshold (0.75)
+
+Post 4 (Life of the Brown Bear) [expected: bear]
+  -> REJECTED | image_id=36 | similarity=0.700
+  -> reason: no confident match, similarity (0.70) below threshold (0.75)
+
+Post 5 (Deer Habitats and Migration) [expected: deer]
+  -> REJECTED | image_id=41 | similarity=0.699
+  -> reason: no confident match, similarity (0.70) below threshold (0.75)
+
+Post 6 (The Architecture of Ancient Roman Aqueducts) [expected: none]
+  -> REJECTED | image_id=40 | similarity=0.059
+  -> reason: no confident match, similarity (0.06) below threshold (0.75)
+
+```
+ 
+**Finding: 0.75 is too strict for this dataset.** Every real, correctly-
+topical post was rejected, alongside the genuinely unrelated Roman
+aqueducts post. The scores themselves are still meaningful, though —
+there's a large, clean gap between real matches (0.45–0.70) and the
+true non-match (0.06), which is a strong signal the embeddings are
+working correctly; the threshold picked in Phase 1 was simply a guess
+that didn't hold up against real data. This is addressed by re-tuning
+the threshold (see below / BUILDLOG.md).
+ 
+**Known limitation observed directly in this test (post 3):** the
+top-ranked candidate for the dog post was `image_id=19` — one of the
+wolf-folder images that the vision model, back in Phase 2, confidently
+and *consistently* mislabeled: both `category` ("dog") and `caption`
+("A wolf-like dog standing in the snow") agree with each other, even
+though the image is actually a wolf. Because category and caption are
+internally consistent (just both wrong), the guard's category-match
+check cannot detect this — it only compares the model's *stated*
+category against the post's expected category, and both say "dog."
+This is a structural limitation of the guard, not a bug: the guard can
+only catch inconsistencies between what the model claims and what the
+post expects, it cannot independently verify ground truth. Documented
+in Design.md §6 and treated as a known, honestly-disclosed limitation
+rather than something to be silently patched over.
+
+## Matching engine — after threshold fix (0.75 → 0.4) ✅
+
+Based on the 0.75 test above showing every real match rejected, the
+threshold was changed to 0.4 — chosen because it's comfortably above
+the true non-match score (0.059) while accepting every real match
+observed (weakest was 0.45), rather than picking an arbitrary round
+number. Re-ran the same test:
+
+```
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> python -m app.services.matching_engine
+Testing matching engine against 6 posts:
+
+Post 1 (Red Fox Behavior) [expected: fox]
+  -> ACCEPTED | image_id=7 | similarity=0.669
+  -> reason: subject and category match, similarity above threshold
+
+Post 2 (Wolves in the Wild) [expected: wolf]
+  -> ACCEPTED | image_id=18 | similarity=0.626
+  -> reason: subject and category match, similarity above threshold
+
+Post 3 (Understanding Domestic Dogs) [expected: dog]
+  -> ACCEPTED | image_id=19 | similarity=0.450
+  -> reason: subject and category match, similarity above threshold
+
+Post 4 (Life of the Brown Bear) [expected: bear]
+  -> ACCEPTED | image_id=36 | similarity=0.700
+  -> reason: subject and category match, similarity above threshold
+
+Post 5 (Deer Habitats and Migration) [expected: deer]
+  -> ACCEPTED | image_id=41 | similarity=0.699
+  -> reason: subject and category match, similarity above threshold
+
+Post 6 (The Architecture of Ancient Roman Aqueducts) [expected: none]
+  -> REJECTED | image_id=40 | similarity=0.059
+  -> reason: no confident match, similarity (0.06) below threshold (0.4)
+```
+
+**Result:** all 5 real, correctly-topical posts now accepted with
+reasonable images from their own category. The unrelated Roman
+aqueducts post correctly rejected — "no confident match" case (§12
+Probe 4) confirmed working.
+
+**Post 3 confirms the known limitation is real, not just theoretical.**
+`image_id=19` — the wolf photo mislabeled as "dog" back in Phase 2 —
+is now accepted as the dog post's top match. The guard's own logic is
+functioning exactly as designed (category matches, similarity clears
+threshold) — the limitation is that the underlying vision-model data
+it's trusting was wrong to begin with, which the guard has no way to
+independently verify. This is the same limitation documented in
+Design.md §6, now observed directly rather than only predicted.
+
+**Still to test:** none of these 6 runs triggered an actual
+category-mismatch rejection (guard rule 3), since each post's top
+candidate happened to already be same-category. Probe 3 (forcing a
+wolf image onto the fox post) needs to be tested explicitly.
+
 ## Real classification results (fox/wolf/dog/bear/deer, 50 images)
 
 - fox: 10/10 correct

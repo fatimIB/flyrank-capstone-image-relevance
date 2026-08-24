@@ -4,3 +4,4 @@ ollama
 fastapi
 uvicorn
 python-dotenv
+sentence-transformers
