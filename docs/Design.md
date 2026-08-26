@@ -165,6 +165,8 @@ filters on it every run (`WHERE status = 'pending'`).
 - **Resolved — similarity threshold:** changed from 0.75 to 0.4 based on
   real test results — see §6.
 
-- **Still open:** Probe 3 ("force the wolf as a candidate for the fox
-  post → guard rejects it") has not yet been tested explicitly — to be
-  tested next.
+- **Resolved — Probe 3:** tested explicitly with `tests/test_guard.py`
+  — a correctly-labeled wolf image forced onto the fox post is rejected
+  by rule 3 with a category-mismatch reason, even though its similarity
+  score (0.410) alone would have cleared the threshold. Full test
+  output in EVIDENCE.md.

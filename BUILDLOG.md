@@ -107,7 +107,7 @@
   already agrees with the post. That limitation became an important Phase 3
   finding.
 
-## Phase 3 — Matching engine (in progress)
+## Phase 3 — Matching engine
 
 - I asked the AI to write the embedding and matching code:
   `app/jobs/seed_posts.py`, `app/services/embedding_service.py`,
@@ -191,3 +191,23 @@
   ("force the wolf as a candidate for the fox post → guard rejects it")
   still needs to be tested explicitly, not just inferred from these 6
   runs.
+
+- Created a real automated test (`tests/test_guard.py`) for this rather
+  than another one-off command, since it directly maps to a Definition
+  of Done requirement ("Automated tests cover... mismatch rejection").
+  First attempt failed on `ModuleNotFoundError: No module named 'app'`
+  — pytest couldn't resolve imports from the tests/ folder. Fixed by
+  adding a `pytest.ini` with `pythonpath = .` at the repo root, a
+  standard fix for this exact issue.
+
+- Test forces a correctly-labeled wolf image (image_id=13, category
+  "wolf", confidence 0.90) as a candidate for the fox post. Result:
+  REJECTED, reason "category mismatch: expected 'fox', detected
+  'wolf'" — test passes. The similarity score for this pairing was
+  0.410, which actually clears the 0.4 threshold on its own — meaning
+  this candidate would have looked like a plausible match by
+  similarity alone. It was specifically rule 3 (the independent
+  category check) that caught and rejected it, which is the clearest
+  evidence yet that the guard's 3-rule design — not similarity ranking
+  by itself — is what makes correct rejection possible. This
+  satisfies §12 Probe 3.

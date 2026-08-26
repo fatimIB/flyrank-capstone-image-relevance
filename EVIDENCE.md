@@ -314,10 +314,51 @@ it's trusting was wrong to begin with, which the guard has no way to
 independently verify. This is the same limitation documented in
 Design.md §6, now observed directly rather than only predicted.
 
-**Still to test:** none of these 6 runs triggered an actual
+**Probe 3 — tested explicitly, now passing ✅**
+ 
+None of the 6 posts above happened to trigger an actual
 category-mismatch rejection (guard rule 3), since each post's top
-candidate happened to already be same-category. Probe 3 (forcing a
-wolf image onto the fox post) needs to be tested explicitly.
+candidate was already same-category. Wrote a proper automated test
+(`tests/test_guard.py`) to demonstrate this explicitly — forcing a
+correctly-labeled wolf image (`image_id=13`, `category="wolf"`,
+confidence 0.90) as a candidate for the fox post
+(`expected_category="fox"`):
+ 
+```
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> pytest tests/test_guard.py -v -s
+========================================== test session starts ===========================================
+platform win32 -- Python 3.12.7, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\hp\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance
+configfile: pytest.ini
+plugins: anyio-4.14.2, langsmith-0.10.10
+collected 1 item                                                                                          
+
+tests/test_guard.py::test_wolf_image_rejected_on_fox_post 
+Forced wolf image (id=13) onto fox post:
+  similarity: 0.410
+  status: rejected
+  reason: category mismatch: expected 'fox', detected 'wolf'
+PASSED
+
+=========================================== 1 passed in 1.43s ============================================
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> 
+```
+ 
+**Notable finding:** similarity (0.410) actually cleared the 0.4
+threshold on its own — this candidate would have looked like a
+plausible match by similarity alone. It was rule 3 specifically
+(the independent category check) that caught and rejected it, exactly
+the failure mode the guard exists to prevent: a semantically-plausible
+but categorically-wrong candidate. This is the clearest, most direct
+evidence yet that the guard's 3-rule design (not similarity ranking
+alone) is what makes correct rejection possible.
+ 
+This satisfies §12 Probe 3 ("force the wolf as a candidate for the fox
+post → the guard rejects it with a category-mismatch explanation") and
+contributes to the "Automated tests cover... mismatch rejection"
+Definition of Done item (§6) — this is a real, permanent, re-runnable
+test in the suite, not a one-off manual check.
 
 ## Real classification results (fox/wolf/dog/bear/deer, 50 images)
 
