@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from app.models.database import get_session
 from app.models.db_models import (
-    Image, ImageMetadataRow, ImageEmbedding, Post, PostEmbedding
+    Image, ImageMetadataRow, ImageEmbedding, Post, PostEmbedding, Suggestion
 )
 from app.services.similarity import cosine_similarity
 
@@ -107,42 +107,68 @@ def apply_guard(metadata: ImageMetadataRow, similarity: float, post: Post) -> Gu
     )
 
 
-def get_suggestion_for_post(post_id: int) -> GuardResult:
+def get_suggestion_for_post(post_id: int, persist: bool = True) -> Suggestion | GuardResult:
     """
     Main entry point: given a post ID, ranks all images, takes the top
     candidate, and runs it through the guard. Only the top candidate is
     checked — if it fails, the result is "no confident match" rather
     than trying candidate #2, #3, etc. (kept simple per project scope).
+ 
+    persist=True (default): saves the result as a real Suggestion row
+    (human_decision starts as "pending") and returns that row. This is
+    what the API routes use, since the review workflow needs something
+    durable to approve/reject against.
+ 
+    persist=False: returns the in-memory GuardResult only, nothing is
+    written to the database. Useful for quick command-line checks or
+    the eval script, where creating a permanent suggestion row isn't
+    needed or wanted.
     """
     session = get_session()
     try:
         post = session.query(Post).filter(Post.id == post_id).first()
         if post is None:
             raise ValueError(f"No post with id={post_id}")
-
+ 
         candidates = rank_candidates(session, post)
         if not candidates:
-            return GuardResult(
+            result = GuardResult(
                 status="rejected",
                 reason="no images available to compare against",
                 image_id=None,
                 similarity=None,
             )
-
-        top_image, top_metadata, top_similarity = candidates[0]
-        return apply_guard(top_metadata, top_similarity, post)
+        else:
+            top_image, top_metadata, top_similarity = candidates[0]
+            result = apply_guard(top_metadata, top_similarity, post)
+ 
+        if not persist:
+            return result
+ 
+        suggestion = Suggestion(
+            post_id=post_id,
+            image_id=result.image_id,
+            similarity=result.similarity if result.similarity is not None else 0.0,
+            status=result.status,
+            reason=result.reason,
+            human_decision="pending",
+        )
+        session.add(suggestion)
+        session.commit()
+        session.refresh(suggestion)
+        return suggestion
     finally:
         session.close()
-
-
+ 
+ 
 if __name__ == "__main__":
     """
-    Quick manual test — runs the matching engine against every post
-    currently in the DB and prints the result. Not part of the
-    'official' pipeline (that's process_images.py / generate_embeddings.py
-    as real batch jobs) — this is just a fast way to sanity-check the
-    matching engine + guard during development.
-
+    Runs the matching engine against every post currently in the DB,
+    saves each result as a real Suggestion row (same as the API does
+    per-post), and prints a summary. Safe to re-run — each run creates
+    fresh suggestion rows (old ones aren't deleted), so if you want a
+    clean slate, clear the suggestions table first.
+ 
     Run: python -m app.services.matching_engine
     """
     session = get_session()
@@ -150,17 +176,17 @@ if __name__ == "__main__":
         posts = session.query(Post).all()
     finally:
         session.close()
-
+ 
     if not posts:
         print("No posts found — run `python -m app.jobs.seed_posts` first.")
     else:
-        print(f"Testing matching engine against {len(posts)} posts:\n")
+        print(f"Creating suggestions for {len(posts)} posts:\n")
         for post in posts:
-            result = get_suggestion_for_post(post.id)
-            sim_str = f"{result.similarity:.3f}" if result.similarity is not None else "N/A"
+            suggestion = get_suggestion_for_post(post.id, persist=True)
+            sim_str = f"{suggestion.similarity:.3f}" if suggestion.similarity is not None else "N/A"
             print(
                 f"Post {post.id} ({post.title}) [expected: {post.expected_category}]\n"
-                f"  -> {result.status.upper()} | image_id={result.image_id} | "
-                f"similarity={sim_str}\n"
-                f"  -> reason: {result.reason}\n"
+                f"  -> saved as suggestion_id={suggestion.id} | {suggestion.status.upper()} | "
+                f"image_id={suggestion.image_id} | similarity={sim_str}\n"
+                f"  -> reason: {suggestion.reason}\n"
             )

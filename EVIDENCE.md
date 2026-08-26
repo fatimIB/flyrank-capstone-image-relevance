@@ -360,6 +360,79 @@ contributes to the "Automated tests cover... mismatch rejection"
 Definition of Done item (§6) — this is a real, permanent, re-runnable
 test in the suite, not a one-off manual check.
 
+## Review API — approve/reject workflow ✅
+ 
+Built FastAPI endpoints (`app/routes/api.py`) exposing the matching
+engine and a human review layer on top of it:
+- `GET /posts/{post_id}/images` — runs the matching engine, saves the
+  result as a real `Suggestion` row, returns it
+- `GET /suggestions/{suggestion_id}` — inspect a suggestion in full
+- `POST /suggestions/{suggestion_id}/approve` / `/reject` — human review
+Ran `python -m app.services.matching_engine` (updated to persist
+results via the API's same code path) to generate one real suggestion
+per post:
+ 
+```
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> python -m app.services.matching_engine
+Creating suggestions for 6 posts:
+
+Post 1 (Red Fox Behavior) [expected: fox]
+  -> saved as suggestion_id=1 | ACCEPTED | image_id=7 | similarity=0.669
+  -> reason: subject and category match, similarity above threshold
+
+Post 2 (Wolves in the Wild) [expected: wolf]
+  -> saved as suggestion_id=2 | ACCEPTED | image_id=18 | similarity=0.626
+  -> reason: subject and category match, similarity above threshold
+
+Post 3 (Understanding Domestic Dogs) [expected: dog]
+  -> saved as suggestion_id=3 | ACCEPTED | image_id=19 | similarity=0.450
+  -> reason: subject and category match, similarity above threshold
+
+Post 4 (Life of the Brown Bear) [expected: bear]
+  -> saved as suggestion_id=4 | ACCEPTED | image_id=36 | similarity=0.700
+  -> reason: subject and category match, similarity above threshold
+
+Post 5 (Deer Habitats and Migration) [expected: deer]
+  -> saved as suggestion_id=5 | ACCEPTED | image_id=41 | similarity=0.699
+  -> reason: subject and category match, similarity above threshold
+
+Post 6 (The Architecture of Ancient Roman Aqueducts) [expected: none]
+  -> saved as suggestion_id=6 | REJECTED | image_id=40 | similarity=0.059
+  -> reason: no confident match, similarity (0.06) below threshold (0.4)
+
+```
+ 
+Confirmed all 6 rows persisted correctly in the `suggestions` table,
+including the rejected one (post 6) — rejections are saved just like
+acceptances, so there's a permanent, inspectable record of every
+decision the guard makes, not just the successful matches.
+ 
+## Human review catching the guard's known limitation ✅
+ 
+This directly tests the limitation documented in Design.md §6:
+`suggestion_id=3` is the "Understanding Domestic Dogs" post matched to
+`image_id=19` — the wolf photo the vision model mislabeled as "dog"
+back in Phase 2 (§6, "Known limitation"). The guard accepted this
+suggestion, correctly by its own logic (category matched, similarity
+cleared threshold) — but the underlying image is not actually a dog.
+ 
+Used the review API to simulate a human catching this:
+ 
+```
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> curl.exe -X POST http://localhost:8000/suggestions/3/reject
+{"suggestion_id":3,"human_decision":"rejected","message":"Suggestion 3 marked as rejected by human review."}
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> 
+
+```
+ 
+**This is the intended purpose of the human review layer, demonstrated
+directly, not just claimed:** the automated guard cannot detect this
+specific class of error (confidently-and-consistently-wrong vision
+output), but the review layer — a human looking at the actual image
+before it goes live — can and does catch it. `human_decision` is now
+`rejected` for suggestion 3, overriding the guard's `accepted` status,
+exactly as designed.
+
 ## Real classification results (fox/wolf/dog/bear/deer, 50 images)
 
 - fox: 10/10 correct
