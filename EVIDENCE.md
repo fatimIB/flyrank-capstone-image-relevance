@@ -134,7 +134,7 @@ Every vision call, success or failure, is logged to `ai_usage_log`:
 50 rows, one per image, all attributed with operation/model/status/cost
 (local model — cost is $0, but every call is still logged).
 
-## Matching engine — embeddings + similarity ranking + guard ⚠️ (threshold needed adjustment — see below)
+## Matching engine — embeddings + similarity ranking + guard
  
 Embeddings generated for all 50 image captions and all 6 posts using
 `sentence-transformers` (`all-MiniLM-L6-v2`), local, no API key:
@@ -510,3 +510,94 @@ guard), not a cherry-picked or inflated result. The no-match case
 (post 6) was correctly handled and is reported separately, as
 "correctly rejected" rather than folded into the precision percentage,
 since it isn't a case of "was the right image chosen."
+
+## Automated tests — schema validation ✅
+
+Created `tests/test_schema.py` covering `ImageMetadata` validation: valid
+data accepted, missing required fields rejected, confidence out of
+range (both directions) rejected, unknown categories rejected, empty
+strings rejected, category casing normalized rather than rejected, and
+the `needs_review` flag correctly set on both sides of the 0.5
+threshold.
+
+```
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> pytest tests/test_schema.py -v
+========================================== test session starts ===========================================
+platform win32 -- Python 3.12.7, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\hp\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance
+configfile: pytest.ini
+plugins: anyio-4.14.2, langsmith-0.10.10
+collected 9 items                                                                                         
+
+tests/test_schema.py::test_valid_data_is_accepted PASSED                                            [ 11%]
+tests/test_schema.py::test_missing_required_field_is_rejected PASSED                                [ 22%]
+tests/test_schema.py::test_confidence_out_of_range_is_rejected PASSED                               [ 33%]
+tests/test_schema.py::test_negative_confidence_is_rejected PASSED                                   [ 44%]
+tests/test_schema.py::test_unknown_category_is_rejected PASSED                                      [ 55%]
+tests/test_schema.py::test_empty_subject_is_rejected PASSED                                         [ 66%]
+tests/test_schema.py::test_category_is_case_normalized PASSED                                       [ 77%]
+tests/test_schema.py::test_needs_review_flag_below_threshold PASSED                                 [ 88%]
+tests/test_schema.py::test_needs_review_flag_above_threshold PASSED                                 [100%]
+
+=========================================== 9 passed in 0.11s ============================================
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> 
+```
+
+9/9 passing. This is real, code-level proof (not just a design claim)
+that invalid vision-model output — missing fields, out-of-range
+confidence, hallucinated categories — is caught by validation and
+never silently stored, satisfying the core rule from Design.md §1 and
+the brief's "invalid responses are never trusted" requirement.
+
+## Automated tests — matching accuracy ✅
+
+Created `tests/test_matching.py`, testing the ranking logic
+(`rank_candidates`) directly and independently of the guard's
+accept/reject decision — this is a different code path than
+`test_guard.py`, which manually computes one similarity score and
+never exercises the actual sorting/ranking mechanism.
+
+```
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> pytest tests/test_matching.py -v -s
+========================================== test session starts ===========================================
+platform win32 -- Python 3.12.7, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\hp\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance
+configfile: pytest.ini
+plugins: anyio-4.14.2, langsmith-0.10.10
+collected 3 items                                                                                         
+
+tests/test_matching.py::test_fox_post_ranks_fox_image_first 
+Fox post top candidate: image_id=7, category=fox, similarity=0.669
+PASSED
+tests/test_matching.py::test_dog_post_ranks_dog_category_first 
+Dog post top candidate: image_id=19, category=dog, similarity=0.450
+PASSED
+tests/test_matching.py::test_unrelated_post_scores_far_below_topical_posts 
+Fox post top score: 0.669, Aqueducts post top score: 0.059
+PASSED
+
+=========================================== 3 passed in 1.02s ============================================
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> 
+```
+
+3/3 passing:
+- **Fox post ranks a fox image first** (§12 Probe 2), and the full
+  candidate list is verified to be genuinely sorted by similarity,
+  descending — not just a coincidentally-correct top result.
+- **Dog post's top candidate is internally consistent** with the
+  vision model's stored classification (image_id=19, category="dog")
+  — this test deliberately checks *ranking consistency*, not factual
+  correctness; the fact this candidate is actually a wolf is a
+  separate, already-documented finding (Design.md §6, run_eval.py).
+- **Unrelated content scores clearly, measurably low** — the Roman
+  aqueducts post's best score (0.059) isn't just lower than the fox
+  post's (0.669), it's under a strict 0.2 threshold, confirming the
+  embeddings genuinely distinguish relevant from irrelevant content
+  rather than producing arbitrary numbers.
+
+Together with `test_guard.py` (mismatch rejection) and `test_schema.py`
+(schema validation), this completes the three test categories required
+by the Definition of Done (§6): "Automated tests cover schema
+validation, mismatch rejection, and matching accuracy."

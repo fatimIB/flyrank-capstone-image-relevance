@@ -63,6 +63,8 @@ values already in the data — see §8 for the reasoning; kept at 0.5.)
 3. For a given post, compute cosine similarity against every image embedding.
 4. Rank candidates by similarity, highest first.
 5. Pass the top candidate through the mismatch guard (§6) before returning it.
+6. Persist the result as a `Suggestion` row (`human_decision` starts
+   `pending`), exposed via the Review API (§9).
 
 ## 6. Mismatch guard — decision rules
 
@@ -170,3 +172,25 @@ filters on it every run (`WHERE status = 'pending'`).
   by rule 3 with a category-mismatch reason, even though its similarity
   score (0.410) alone would have cleared the threshold. Full test
   output in EVIDENCE.md.
+
+## 9. Review API
+ 
+```
+GET  /posts/{post_id}/images          — runs matching engine, saves + returns a Suggestion
+GET  /suggestions/{suggestion_id}     — inspect a suggestion
+POST /suggestions/{suggestion_id}/approve
+POST /suggestions/{suggestion_id}/reject
+```
+ 
+Both accepted and rejected suggestions are saved. `main.py` just wires
+up the app; endpoints live in `app/routes/api.py`.
+ 
+## 10. Evaluation methodology
+ 
+`app/jobs/run_eval.py` compares each suggestion against
+`image.folder_category` (ground truth, not the model's own claim —
+using the model's claim would be circular). Posts with no real match
+(`expected_category="none"`) are reported separately, not folded into
+the precision number.
+ 
+**Result: 80% top-1 precision (4/5).** Full output in EVIDENCE.md.

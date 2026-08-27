@@ -211,3 +211,27 @@
   evidence yet that the guard's 3-rule design — not similarity ranking
   by itself — is what makes correct rejection possible. This
   satisfies §12 Probe 3.
+
+## Phase 4 — Production layer
+
+- I asked the AI to write the Review API and eval script code: `app/main.py`, `app/routes/api.py`, the added persistence logic in `app/services/matching_engine.py`, and `app/jobs/run_eval.py`. **The AI wrote this code, not me.** My role was directing what was needed, testing it, catching structural issues, and pushing back when something didn't make sense to me.
+
+- The AI's first version put all API route logic directly in `app/main.py`. I pointed out I already had an `app/routes/` folder from the original project structure, and asked why the routes weren't there. The AI agreed this was the more correct convention (`main.py` should stay small and just wire things together) and moved the actual endpoint logic into `app/routes/api.py`, with `main.py` reduced to just app creation, startup, and including the router.
+
+- Tested the API myself: ran `uvicorn app.main:app --reload`, then called `GET /posts/1/images` via curl. Got a real response back (`suggestion_id=1`, `image_id=7`, `status=accepted`) — confirmed the endpoint genuinely runs the matching engine live and persists a real row, not just returning a static/fake response.
+
+- I noticed only one suggestion existed in the database after calling the endpoint once. I told the AI this was inefficient and confusing, since there were two nearly-identical functions in `matching_engine.py` (`get_suggestion_for_post` returning an in-memory result, and `get_and_save_suggestion` doing the same thing plus persisting). I asked the AI to remove the duplicate functions and instead make the matching engine's own script save results directly to the database, rather than needing to curl every post individually to populate the table. The AI consolidated both into one function with a `persist` flag, and updated the API route and the script's `__main__` block to both use the single consolidated function.
+
+- Ran the consolidated script (`python -m app.services.matching_engine`) to create one real, saved suggestion per post. Confirmed all 6 rows in the `suggestions` table, including the rejected one (post 6) — I asked directly why a rejected suggestion gets saved at all, and the reasoning made sense: it's a permanent record of every decision the guard makes, not just successful matches, and it's required for the "no confident match" case to actually be inspectable later.
+
+- Used the review API to directly test the human-review layer against the known limitation from Phase 3: called `POST /suggestions/3/reject` on the suggestion that paired the dog post with `image_id=19` (the wolf mislabeled as dog). This flipped `human_decision` to `rejected`, overriding the guard's `accepted` status — a real, working demonstration that human review can catch exactly the class of error the guard structurally cannot.
+
+- For the eval script, I told the AI it needed to use the real category from the folder the image came from — not the category the vision model guessed — and to get that value from the `images` table in the database, not `image_metadata`. This was important because comparing against the model's own claimed category would be circular, since that's already what the guard checks internally. The AI wrote `run_eval.py` (`app/jobs/run_eval.py`) using `image.folder_category` from the `images` table as ground truth, which is what makes the result a genuine, independent measurement rather than a self-confirming one.
+
+- Ran `run_eval.py`: top-1 precision came out to 4/5 = 80%, with post 3 (the wolf-as-dog case) correctly scored as wrong, and the Roman aqueducts post reported separately as a correctly-handled no-match case rather than folded into the precision percentage.
+
+- Asked the AI to write `tests/test_schema.py` covering `ImageMetadata` validation. **The AI wrote this test file, not me.** It covers: valid data accepted, missing fields rejected, confidence out-of-range in both directions rejected, unknown categories rejected, empty strings rejected, category casing normalized (not rejected), and the `needs_review` flag checked on both sides of the 0.5 boundary. 9/9 passing.
+
+- Asked the AI to write `tests/test_matching.py` to test the ranking logic directly, separately from `test_guard.py`. **The AI wrote this test file, not me.** It covers: the fox post ranking a fox image first with the full candidate list genuinely sorted descending, the dog post's ranking being internally consistent with stored (if wrong) metadata, and the unrelated post scoring clearly below a fixed threshold. 3/3 passing.
+
+- With `test_schema.py`, `test_guard.py`, and `test_matching.py` all passing (13/13 tests total), this covers all three test categories required by the Definition of Done: schema validation, mismatch rejection, and matching accuracy.
