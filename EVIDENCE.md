@@ -72,6 +72,21 @@ Every response was parsed as JSON and validated against `ImageMetadata`
 invalid responses would have been retried or marked `failed`, never
 silently accepted.
 
+## Real classification results (fox/wolf/dog/bear/deer, 50 images)
+
+- fox: 10/10 correct
+- wolf: 6/10 correct, 4 misclassified as fox/dog (confidences 0.80–1.00
+  on the wrong answers — see BUILDLOG.md, this became an important
+  finding about why the guard's category check matters, not just
+  confidence thresholds)
+- dog: 10/10 correct
+- bear: 10/10 correct
+- deer: 10/10 correct
+
+Overall raw vision accuracy: 46/50 (92%) — note this is *raw* accuracy,
+not the guard's final decision accuracy, which will be measured
+separately once the guard is built (Phase 3/4).
+
 ## Batch processing with retries ✅
  
 Batch job proved idempotent/resumable: an earlier interrupted run left
@@ -433,21 +448,6 @@ before it goes live — can and does catch it. `human_decision` is now
 `rejected` for suggestion 3, overriding the guard's `accepted` status,
 exactly as designed.
 
-## Real classification results (fox/wolf/dog/bear/deer, 50 images)
-
-- fox: 10/10 correct
-- wolf: 6/10 correct, 4 misclassified as fox/dog (confidences 0.80–1.00
-  on the wrong answers — see BUILDLOG.md, this became an important
-  finding about why the guard's category check matters, not just
-  confidence thresholds)
-- dog: 10/10 correct
-- bear: 10/10 correct
-- deer: 10/10 correct
-
-Overall raw vision accuracy: 46/50 (92%) — note this is *raw* accuracy,
-not the guard's final decision accuracy, which will be measured
-separately once the guard is built (Phase 3/4).
-
 ## Evaluation — top-1 precision measured ✅
 
 Wrote `app/jobs/run_eval.py` to measure top-1 precision against ground
@@ -601,3 +601,224 @@ Together with `test_guard.py` (mismatch rejection) and `test_schema.py`
 (schema validation), this completes the three test categories required
 by the Definition of Done (§6): "Automated tests cover schema
 validation, mismatch rejection, and matching accuracy."
+
+
+## Semantic matching on equivalent concepts (§4 example) ⚠️ (mechanism proven, see caveat)
+
+Standalone test (`tests/test_semantic_synonym.py`) — separate from the
+main 6-post evaluation, doesn't affect the reported precision number.
+Tests the brief's own named example directly: does a post using only
+the scientific name ("Vulpes vulpes") and physical/behavioral
+description, never the word "fox", still correctly match a fox image?
+Nothing is added to the database — the test post is an in-memory
+object only, embedded and compared directly against existing stored
+image embeddings.
+
+```
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> pytest tests/test_semantic_synonym.py -v -s
+========================================== test session starts ==========================================
+platform win32 -- Python 3.12.7, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\hp\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance
+configfile: pytest.ini
+plugins: anyio-4.14.2, langsmith-0.10.10
+collected 1 item                                                                                         
+
+tests/test_semantic_synonym.py::test_scientific_name_semantically_matches_fox_image Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights: 100%|███████████████████████████████████████████████| 103/103 [00:00<00:00, 1705.64it/s]
+
+Semantic synonym test
+---------------------
+Post: Vulpes vulpes: A Wild Canid Species (never says 'fox')
+Top image ID: 12
+Detected category: fox
+Similarity: 0.460
+Guard status: accepted
+Guard reason: subject and category match, similarity above threshold
+PASSED
+
+===================================== 1 passed in 135.68s (0:02:15) =====================================
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> 
+```
+
+
+**Note on the first attempt:** an earlier version of this test, using
+vaguer habitat-focused wording ("forests, grasslands, urban
+environments"), failed — the top match was a deer image (similarity
+0.453), not a fox. The guard correctly rejected that candidate
+(category mismatch). This was a genuine finding, not a bug: the small
+local embedding model's semantic reach didn't confidently link
+"Vulpes vulpes" to fox-specific traits when the wording leaned on
+generic habitat description that overlapped with other animals in the
+dataset. Rewriting the content to use fox-specific physical/behavioral
+traits (orange-red fur, narrow snout, bushy white-tipped tail,
+solitary hunting) instead of habitat words resolved this.
+
+```
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> pytest tests/test_semantic_synonym.py -v -s                           
+========================================== test session starts ==========================================
+platform win32 -- Python 3.12.7, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\hp\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance
+configfile: pytest.ini
+plugins: anyio-4.14.2, langsmith-0.10.10
+collected 1 item                                                                                         
+
+tests/test_semantic_synonym.py::test_scientific_name_semantically_matches_fox_image Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights: 100%|████████████████████████████████████████████████| 103/103 [00:00<00:00, 705.29it/s]
+
+Semantic synonym test
+---------------------
+Post: Vulpes vulpes: A Wild Canid Species
+Contains word 'fox': NO
+Top image ID: 41
+Detected category: deer
+Similarity: 0.453
+Guard status: rejected
+Guard reason: category mismatch: expected 'fox', detected 'deer'
+FAILED
+
+=============================================== FAILURES ================================================
+__________________________ test_scientific_name_semantically_matches_fox_image __________________________
+
+    def test_scientific_name_semantically_matches_fox_image():
+        """
+        A completely new post about Vulpes vulpes should semantically
+        match an existing fox image even though the post never uses
+        the word "fox".
+    
+        Nothing is inserted into or persisted in the database.
+        """
+        post = Post(
+            title="Vulpes vulpes: A Wild Canid Species",
+            content=(
+                "Vulpes vulpes is a wild canid species found across the "
+                "Northern Hemisphere, known for its reddish coat and highly "
+                "adaptable behavior. This species thrives in forests, "
+                "grasslands, and increasingly in urban environments, "
+                "hunting small rodents and birds. Its bushy tail and pointed "
+                "ears are distinctive physical traits among wild canids."
+            ),
+            expected_category="fox",
+        )
+    
+        # Make sure the test really contains no keyword overlap.
+        assert "fox" not in post.title.lower()
+        assert "fox" not in post.content.lower()
+    
+        # Generate the embedding for this NEW post directly in memory
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+    
+        text = f"{post.title}\n{post.content}"
+        post.embedding_for_test = model.encode(text).tolist()
+    
+        # Compare the temporary post against existing images
+        session = get_session()
+    
+        try:
+            # rank_candidates normally retrieves the embedding using
+            # post.id. Since this post is not in the DB, we perform the
+            # same ranking operation here using its in-memory embedding.
+    
+            from app.models.db_models import Image, ImageMetadataRow, ImageEmbedding
+            from app.services.similarity import cosine_similarity
+    
+            candidates = []
+    
+            image_embeddings = session.query(ImageEmbedding).all()
+    
+            for emb_row in image_embeddings:
+                image = (
+                    session.query(Image)
+                    .filter(Image.id == emb_row.image_id)
+                    .first()
+                )
+    
+                metadata = (
+                    session.query(ImageMetadataRow)
+                    .filter(ImageMetadataRow.image_id == emb_row.image_id)
+                    .first()
+                )
+    
+                if image is None or metadata is None:
+                    continue
+    
+                score = cosine_similarity(
+                    post.embedding_for_test,
+                    emb_row.embedding,
+                )
+    
+                candidates.append((image, metadata, score))
+    
+            candidates.sort(key=lambda c: c[2], reverse=True)
+    
+            assert candidates, (
+                "No image candidates found — run generate_embeddings.py first"
+            )
+    
+            # Inspect the top semantic match
+            top_image, top_metadata, top_similarity = candidates[0]
+    
+            print("\nSemantic synonym test")
+            print("---------------------")
+            print("Post: Vulpes vulpes: A Wild Canid Species")
+            print("Contains word 'fox': NO")
+            print(f"Top image ID: {top_image.id}")
+            print(f"Detected category: {top_metadata.category}")
+            print(f"Similarity: {top_similarity:.3f}")
+    
+            # Run the SAME guard used by the real system
+            result = apply_guard(
+                top_metadata,
+                top_similarity,
+                post,
+            )
+    
+            print(f"Guard status: {result.status}")
+            print(f"Guard reason: {result.reason}")
+    
+            # Assertions
+>           assert top_metadata.category == "fox", (
+                f"Expected semantic search to surface a fox image first, "
+                f"but got category='{top_metadata.category}' "
+                f"(image_id={top_image.id})"
+            )
+E           AssertionError: Expected semantic search to surface a fox image first, but got category='deer' (image_id=41)
+E           assert 'deer' == 'fox'
+E             
+E             - fox
+E             + deer
+
+tests\test_semantic_synonym.py:119: AssertionError
+------------------------------------------- Captured log call -------------------------------------------
+WARNING  huggingface_hub.utils._http:_http.py:951 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+======================================== short test summary info ========================================
+FAILED tests/test_semantic_synonym.py::test_scientific_name_semantically_matches_fox_image - AssertionError: Expected semantic search to surface a fox image first, but got category='deer' (image...
+===================================== 1 failed in 155.65s (0:02:35) ========                              
+PS C:\Users\hp\Desktop\FlyRank assignment\flyrank-capstone-image-relevance> 
+```
+
+**Important caveat, caught by re-checking against ground truth:**
+`image_id=12` — the top match in the passing run above — is
+`pexels-dominikrh-35604352.jpg`, sourced from the `imgs/wolf/` folder
+(`folder_category="wolf"`). The vision model misclassified it as
+`category="fox"` (confidence 0.90) back in Phase 2 — this is one of
+the original 4 wolf misclassifications already documented (Design.md
+§6, "wolf: 6/10 correct"). So while this test's `PASSED` result
+correctly proves the *matching mechanism* works semantically (a post
+never containing the word "fox" still got ranked against a candidate
+the system believes is a fox) and the *guard's internal logic* is
+sound (claimed category matched expected category), it does **not**
+prove the final recommendation was factually correct — the underlying
+image is actually a wolf, not a fox.
+
+This is the same structural limitation documented in Design.md §6, now
+observed a second time, independently, in a different context (a
+wolf-as-fox misclassification, rather than the earlier wolf-as-dog
+case). It's genuine, additional evidence that this limitation is
+recurring rather than a one-off — and, once again, exactly the kind of
+case the human review layer (§9) exists to catch, since the guard
+cannot independently verify ground truth for either. Both the deer
+failure above and this wolf-as-fox case demonstrate the same pattern:
+the guard behaves correctly given what it's told, but what it's told
+can itself be wrong.

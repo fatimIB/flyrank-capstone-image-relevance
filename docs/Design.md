@@ -108,8 +108,10 @@ caption matching that wrong category), the guard has no signal to catch
 it — this can't be fixed inside the guard without giving it access to
 ground truth a real system wouldn't have for new images. This is why
 human review (`human_decision` on `suggestions`) exists as a separate
-layer, not a redundant one. See EVIDENCE.md/BUILDLOG.md for the specific
-case this was observed in.
+layer, not a redundant one. Observed twice, independently: a wolf
+misclassified as "dog" (Phase 3) and a wolf misclassified as "fox"
+(the semantic synonym test, §8) — see EVIDENCE.md/BUILDLOG.md for both
+cases.
 
 ## 7. Database design
 
@@ -172,6 +174,12 @@ filters on it every run (`WHERE status = 'pending'`).
   by rule 3 with a category-mismatch reason, even though its similarity
   score (0.410) alone would have cleared the threshold. Full test
   output in EVIDENCE.md.
+
+- **Resolved — semantic matching on equivalent concepts (§4):** tested
+  with a standalone test (`tests/test_semantic_synonym.py`) — a post
+  using only the scientific name "Vulpes vulpes" and physical/behavioral
+  traits, never the word "fox", correctly matched a fox-classified
+  image. Mechanism confirmed working; see caveat above and EVIDENCE.md.
 
 ## 9. Review API
  

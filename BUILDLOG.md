@@ -235,3 +235,11 @@
 - Asked the AI to write `tests/test_matching.py` to test the ranking logic directly, separately from `test_guard.py`. **The AI wrote this test file, not me.** It covers: the fox post ranking a fox image first with the full candidate list genuinely sorted descending, the dog post's ranking being internally consistent with stored (if wrong) metadata, and the unrelated post scoring clearly below a fixed threshold. 3/3 passing.
 
 - With `test_schema.py`, `test_guard.py`, and `test_matching.py` all passing (13/13 tests total), this covers all three test categories required by the Definition of Done: schema validation, mismatch rejection, and matching accuracy.
+
+## Phase 4 — Semantic synonym test
+
+- I asked the AI for a standalone semantic-matching test that doesn't add anything to the database or seed_posts.py — a post about "Vulpes vulpes" (the scientific name for fox) that never uses the word "fox", to directly test the brief's own example of semantic matching on equivalent concepts. The first version failed: the top match was a deer image (similarity 0.453), not a fox, correctly rejected by the guard.
+
+- Claude rewrote the test's post content to use fox-specific physical and behavioral traits (orange-red fur, narrow snout, bushy white-tipped tail, solitary hunting) instead of vague habitat words, and re-ran it. This version passed: top match was image_id=12, category "fox", accepted.
+
+- I caught myself that image_id=12 was actually one of the wolf-folder images the vision model had misclassified as "fox" back in Phase 2 — not a genuine fox. I pointed this out rather than accepting the passing test at face value. This meant the "PASSED" result only proved the matching mechanism and guard logic work correctly given what they're told, not that the final recommendation was factually correct. We documented this honestly in EVIDENCE.md as a second, independent occurrence of the same known limitation from Phase 3 (guard cannot verify ground truth), this time wolf-as-fox instead of wolf-as-dog.
