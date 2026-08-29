@@ -1,0 +1,22 @@
+run: pip install -r requirements.txt && cp .env.example .env && uvicorn app.main:app --reload
+
+seed: python -m app.jobs.process_images && python -m app.jobs.seed_posts && python -m app.jobs.generate_embeddings && python -m app.services.matching_engine
+
+test: pytest
+
+base_url: http://localhost:8000
+
+prerequisites:
+  - Ollama must be installed and running locally (https://ollama.com)
+  - Run `ollama pull llava` before seeding (~4.5GB download)
+
+notes:
+  - The seed step processes 50 images through a local vision model and
+    takes approximately 90 minutes on typical hardware — this is
+    expected, not a hang. Progress prints per image.
+
+endpoints:
+  - GET /posts/{post_id}/images
+  - GET /suggestions/{suggestion_id}
+  - POST /suggestions/{suggestion_id}/approve
+  - POST /suggestions/{suggestion_id}/reject
